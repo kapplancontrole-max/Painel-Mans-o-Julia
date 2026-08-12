@@ -265,7 +265,7 @@
                     </thead>
                     <tbody id="tabela_vagas">
                         <tr>
-                            <td colspan="5" style="text-align:center;">Buscando informações do servidor na nuvem...</td>
+                            <td colspan="5" style="text-align:center;">Buscando informações em tempo real...</td>
                         </tr>
                     </tbody>
                 </table>
@@ -282,86 +282,78 @@
     </footer>
 
     <script>
-        // Importante: Substitua este valor pela sua URL real gerada na Implantação do Google Apps Script
-        const URL_GAS = "https://script.google.com/macros/s/AKfycbxoMO8UCSCXwtY3Te15wz5WpbVw0W1i2mBou-n494JrAsn51TLw3aH__wtPWMQvTsiS/exec";
-
         function atualizarPainel() {
-            fetch(URL_GAS)
+            // Consome diretamente a rota da API Flask local
+            fetch('/api/dados_tempo_real')
                 .then(response => response.json())
                 .then(data => {
-                    // Verifica se já existem dados recebidos do servidor local
-                    if (data.mensagem) {
-                        document.getElementById('tabela_vagas').innerHTML = `
-                            <tr><td colspan="5" style="text-align:center;">${data.mensagem}</td></tr>
-                        `;
-                        return;
-                    }
+                    if (!data) return;
 
                     // Métricas Principais
-                    let consumoKW = ( (data.consumo_atual_w || 0) / 1000.0 ).toFixed(2);
-                    let limiteKW = ( (data.limite_geral_w || 0) / 1000.0 ).toFixed(2);
+                    let consumoW = data.consumo_atual_w !== undefined ? data.consumo_atual_w : (data.consumo_atual_predio_w || 0);
+                    let limiteW = data.limite_geral_w || 0;
+
+                    let consumoKW = (consumoW / 1000.0).toFixed(2);
+                    let limiteKW = (limiteW / 1000.0).toFixed(2);
                     
                     document.getElementById('txt_consumo').innerText = consumoKW;
                     document.getElementById('txt_limite').innerText = limiteKW;
 
                     // Atualiza a tabela detalhada e o indicador de distribuição
-                    if (data.vagas) {
-                        let totalEstacoes = Object.keys(data.vagas).length;
-                        let recarregandoCount = 0;
-                        let correnteCorrente = 32;
-                        let htmlTabela = '';
+                    let vagas = data.vagas || data.estacoes || {};
+                    let totalEstacoes = Object.keys(vagas).length;
+                    let recarregandoCount = 0;
+                    let correnteCorrente = 32;
+                    let htmlTabela = '';
 
-                        // Considera APENAS as estações que estão ativamente injetando energia no veículo
-                        const estadosAtivos = ["Charging"];
+                    const estadosAtivos = ["Charging", "Preparing"];
 
-                        for (let idHW in data.vagas) {
-                            let vaga = data.vagas[idHW];
-                            let status = vaga.status || "Available";
-                            
-                            let estaCarregando = estadosAtivos.includes(status);
-                            
-                            if (estaCarregando) {
-                                recarregandoCount++;
-                                correnteCorrente = vaga.corrente_alvo_a || 32;
-                            }
-
-                            let badgeClass = "badge-offline";
-                            if (status === "Charging") {
-                                badgeClass = "badge-charging";
-                            } else if (status === "Available") {
-                                badgeClass = "badge-available";
-                            }
-
-                            htmlTabela += `
-                                <tr>
-                                    <td><strong>${vaga.filtro_planilha || idHW}</strong></td>
-                                    <td><code>${idHW}</code></td>
-                                    <td><span class="badge-status ${badgeClass}">${status}</span></td>
-                                    <td><strong>${vaga.corrente_alvo_a || 32} A</strong></td>
-                                    <td>${(vaga.consumo_acumulado || 0.0).toFixed(2)} kWh</td>
-                                </tr>
-                            `;
+                    for (let idHW in vagas) {
+                        let vaga = vagas[idHW];
+                        let status = vaga.status || "Available";
+                        let estaCarregando = estadosAtivos.includes(status);
+                        
+                        if (estaCarregando) {
+                            recarregandoCount++;
+                            correnteCorrente = vaga.corrente_alvo_a || 32;
                         }
 
-                        document.getElementById('txt_carregando').innerText = `${recarregandoCount}/${totalEstacoes}`;
-                        document.getElementById('txt_corrente').innerText = recarregandoCount > 0 ? correnteCorrente : 0;
-
-                        if (totalEstacoes > 0) {
-                            document.getElementById('tabela_vagas').innerHTML = htmlTabela;
-                        } else {
-                            document.getElementById('tabela_vagas').innerHTML = `
-                                <tr><td colspan="5" style="text-align:center;">Nenhuma estação cadastrada no momento.</td></tr>
-                            `;
+                        let badgeClass = "badge-offline";
+                        if (status === "Charging") {
+                            badgeClass = "badge-charging";
+                        } else if (status === "Available") {
+                            badgeClass = "badge-available";
                         }
+
+                        htmlTabela += `
+                            <tr>
+                                <td><strong>${vaga.filtro_planilha || idHW}</strong></td>
+                                <td><code>${idHW}</code></td>
+                                <td><span class="badge-status ${badgeClass}">${status}</span></td>
+                                <td><strong>${vaga.corrente_alvo_a || 32} A</strong></td>
+                                <td>${(vaga.consumo_acumulado || 0.0).toFixed(2)} kWh</td>
+                            </tr>
+                        `;
+                    }
+
+                    document.getElementById('txt_carregando').innerText = `${recarregandoCount}/${totalEstacoes}`;
+                    document.getElementById('txt_corrente').innerText = recarregandoCount > 0 ? correnteCorrente : 0;
+
+                    if (totalEstacoes > 0) {
+                        document.getElementById('tabela_vagas').innerHTML = htmlTabela;
+                    } else {
+                        document.getElementById('tabela_vagas').innerHTML = `
+                            <tr><td colspan="5" style="text-align:center;">Nenhuma estação conectada no momento.</td></tr>
+                        `;
                     }
                 })
                 .catch(error => {
-                    console.error('Erro ao conectar com a API do Google Apps Script:', error);
+                    console.error('Erro ao conectar com a API local:', error);
                 });
         }
 
-        // Atualiza o painel a cada 10 segundos
-        setInterval(atualizarPainel, 10000);
+        // Atualiza a cada 3 segundos
+        setInterval(atualizarPainel, 3000);
         atualizarPainel();
     </script>
 </body>
